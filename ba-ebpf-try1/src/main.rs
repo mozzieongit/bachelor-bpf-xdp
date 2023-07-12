@@ -1,9 +1,14 @@
 use anyhow::Context;
-use aya::programs::{Xdp, XdpFlags};
-use aya::{include_bytes_aligned, Bpf};
+use aya::{
+    include_bytes_aligned,
+    maps::HashMap,
+    programs::{Xdp, XdpFlags},
+    Bpf,
+};
 use aya_log::BpfLogger;
 use clap::Parser;
 use log::{info, warn};
+use std::net::Ipv4Addr;
 use tokio::signal;
 
 #[derive(Debug, Parser)]
@@ -38,6 +43,13 @@ async fn main() -> Result<(), anyhow::Error> {
     program.load()?;
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+
+    let mut blocklist: HashMap<_, u32, u32> =
+        HashMap::try_from(bpf.map_mut("BLOCKLIST").unwrap())?;
+
+    let block_addr: u32 = Ipv4Addr::new(127, 0, 0, 3).try_into()?;
+
+    blocklist.insert(block_addr, 0, 0)?;
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
