@@ -4,6 +4,7 @@ use aya::{
     maps::HashMap,
     programs::{Xdp, XdpFlags},
     Bpf,
+    util,
 };
 use aya_log::BpfLogger;
 use clap::Parser;
@@ -44,12 +45,18 @@ async fn main() -> Result<(), anyhow::Error> {
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-    let mut blocklist: HashMap<_, u32, u32> =
-        HashMap::try_from(bpf.map_mut("BLOCKLIST").unwrap())?;
+    let mut ifindex: HashMap<_, u32, u32> =
+        HashMap::try_from(bpf.map_mut("IFINDEX").unwrap())?;
 
-    let block_addr: u32 = Ipv4Addr::new(127, 0, 0, 3).try_into()?;
+    let pairs = vec![
+        (0,16), // docker0
+        (1,2), // eno1
+        (2,7) // ens3f1
+    ];
 
-    blocklist.insert(block_addr, 0, 0)?;
+    for pair in pairs.iter() {
+        ifindex.insert(pair.0, pair.1, 0)?;
+    }
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
