@@ -14,6 +14,7 @@ use core::mem;
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr},
+    tcp::TcpHdr
 };
 
 #[map(name = "IFINDEX")]
@@ -71,10 +72,22 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let orig_check = u16::from_be(unsafe { (*ipv4hdr).check });
     let new_check = unsafe { checksum(&ctx)? };
     let proto = unsafe { (*ipv4hdr).proto };
+    let mut tcphdr: Option<*mut TcpHdr> = None;
+    let dest_port = match proto {
+        IpProto::Tcp => {
+            tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+            if tcphdr.is_some() {
+                Some(u16::from_be(unsafe { (*tcphdr.unwrap()).dest }))
+            } else {
+                None
+            }
+        },
+        _ => None
+    };
 
     info!(
         &ctx,
-        "_START: from {}.{}.{}.{} to {}.{}.{}.{}, checksum: {} (inpkt:{})",
+        "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, checksum: {} (inpkt:{})",
         (source_addr >> 24) & 0xff,
         (source_addr >> 16) & 0xff,
         (source_addr >> 8) & 0xff,
@@ -83,6 +96,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
         (dest_addr >> 16) & 0xff,
         (dest_addr >> 8) & 0xff,
         dest_addr & 0xff,
+        dest_port.unwrap_or(0),
         new_check,
         orig_check
     );
@@ -103,48 +117,46 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let _ip_xdp2_10: u32 = 0xa010201;
     let _ip_flood_10: u32 = 0xa010202;
     let action =
-        if proto == IpProto::Icmp && source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 {
+        if proto == IpProto::Tcp && source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && tcphdr.is_some() && dest_port == Some(5202) {
             let csum: u16;
             unsafe {
-                (*ipv4hdr).src_addr = u32::to_be(_ip_flood);
-                (*ipv4hdr).dst_addr = u32::to_be(_ip_xdp1);
+                // (*ipv4hdr).src_addr = u32::to_be(_ip_flood);
+                // (*ipv4hdr).dst_addr = u32::to_be(_ip_xdp1);
+                (*tcphdr.unwrap()).dest = 5201;
                 csum = checksum(&ctx)?;
                 (*ipv4hdr).check = u16::to_be(csum);
             }
-            info!(
-                &ctx,
-                "_MID: changeing packet: {}.{}.{}.{} => {}.{}.{}.{} to {}.{}.{}.{} => {}.{}.{}.{} (new check: {})",
-                (source_addr >> 24) & 0xff,
-                (source_addr >> 16) & 0xff,
-                (source_addr >> 8) & 0xff,
-                source_addr & 0xff,
-                (dest_addr >> 24) & 0xff,
-                (dest_addr >> 16) & 0xff,
-                (dest_addr >> 8) & 0xff,
-                dest_addr & 0xff,
-                (_ip_flood >> 24) & 0xff,
-                (_ip_flood >> 16) & 0xff,
-                (_ip_flood >> 8) & 0xff,
-                _ip_flood & 0xff,
-                (_ip_xdp1 >> 24) & 0xff,
-                (_ip_xdp1 >> 16) & 0xff,
-                (_ip_xdp1 >> 8) & 0xff,
-                _ip_xdp1 & 0xff,
-                csum
-            );
+            // info!(
+                // &ctx,
+                // "_MID: changeing packet: {}.{}.{}.{} => {}.{}.{}.{} to {}.{}.{}.{} => {}.{}.{}.{} (new check: {})",
+                // (source_addr >> 24) & 0xff,
+                // (source_addr >> 16) & 0xff,
+                // (source_addr >> 8) & 0xff,
+                // source_addr & 0xff,
+                // (dest_addr >> 24) & 0xff,
+                // (dest_addr >> 16) & 0xff,
+                // (dest_addr >> 8) & 0xff,
+                // dest_addr & 0xff,
+                // (_ip_flood >> 24) & 0xff,
+                // (_ip_flood >> 16) & 0xff,
+                // (_ip_flood >> 8) & 0xff,
+                // _ip_flood & 0xff,
+                // (_ip_xdp1 >> 24) & 0xff,
+                // (_ip_xdp1 >> 16) & 0xff,
+                // (_ip_xdp1 >> 8) & 0xff,
+                // _ip_xdp1 & 0xff,
+                // csum
+            // );
             // // docker0 => 0
             // // eno1 => 1
             // // ens3f1 => 2
-            // (0,16), // docker0
-            // (1,2), // eno1
-            // (2,7) // ens3f1
+            // index 13 // docker0 // bridge not supported
+            // index 2  // eno1    // tg3 driver not supported
+            // index 7  // ens3f1
             // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
-            let ifindex = 2u32;
-            let flags = 0;
-            let a = unsafe { bpf_redirect(ifindex, flags).try_into().unwrap() };
-            info!(&ctx, " ======> {}", a);
-            a
-            // xdp_action::XDP_REDIRECT
+            // 20 is veth für iperf3
+            let ifindex = 20u32;
+            unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
             // xdp_action::XDP_TX
             // xdp_action::XDP_PASS
         } else {
