@@ -61,7 +61,7 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
 }
 
 fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
-    let ethhdr: *const EthHdr = ptr_at(&ctx, 0)?;
+    let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
     match unsafe { (*ethhdr).ether_type } {
         EtherType::Ipv4 => {}
         _ => return Ok(xdp_action::XDP_PASS),
@@ -128,17 +128,19 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
             // (*ipv4hdr).src_addr = u32::to_be(_ip_flood);
             // (*ipv4hdr).dst_addr = u32::to_be(_ip_xdp1);
             // (*ipv4hdr).src_addr = u32::to_be(u32::from_be_bytes([172,17,0,1]));
-            // let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
-            let new_dst_addr = _ip_xdp2;
+            // let new_dst_addr = _ip_xdp2;
+            let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
             (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
-            // replace first half of address check
+
             let udp_check_orig: u16 = u16::from_be((*udphdr.unwrap()).check);
+
+            // REPLACE DESTINATION IP CHECKSUM PART
+            // replace first half of address check
             let udp_check: u16 = csum_replace(
                 udp_check_orig,
                 (dest_addr >> 16) as u16,
                 (new_dst_addr >> 16) as u16,
             );
-
             // replace second half of address
             let udp_check: u16 = csum_replace(
                 udp_check,
@@ -146,6 +148,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                 (new_dst_addr & 0xffff) as u16,
             );
 
+            // REPLACE DEST_PORT CHECKSUM PART
             // replace port in checksum
             let udp_check: u16 = csum_replace(
                 udp_check,
@@ -155,45 +158,48 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
 
             (*udphdr.unwrap()).dest = u16::to_be(5201);
 
+            // let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
+            // (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
+
+            // // REPLACE SOURCE IP CHECKSUM PART
+            // // replace first half of address check
+            // let udp_check: u16 = csum_replace(
+            //     udp_check,
+            //     (source_addr >> 16) as u16,
+            //     (new_src_addr >> 16) as u16,
+            // );
+
+            // // replace second half of address
+            // let udp_check: u16 = csum_replace(
+            //     udp_check,
+            //     (source_addr & 0xffff) as u16,
+            //     (new_src_addr & 0xffff) as u16,
+            // );
+
             // write new checksum back into udp header
             (*udphdr.unwrap()).check = u16::to_be(udp_check);
             csum_ip = checksum(&ctx)?;
             (*ipv4hdr).check = u16::to_be(csum_ip);
+
+            // container mac 02:42:ac:11:00:02
+           (*ethhdr).dst_addr[0] = 0x02;
+           (*ethhdr).dst_addr[1] = 0x42;
+           (*ethhdr).dst_addr[2] = 0xac;
+           (*ethhdr).dst_addr[3] = 0x11;
+           (*ethhdr).dst_addr[4] = 0x00;
+           (*ethhdr).dst_addr[5] = 0x02;
         }
-        // info!(
-        // &ctx,
-        // "_MID: changeing packet: {}.{}.{}.{} => {}.{}.{}.{} to {}.{}.{}.{} => {}.{}.{}.{} (new check: {})",
-        // (source_addr >> 24) & 0xff,
-        // (source_addr >> 16) & 0xff,
-        // (source_addr >> 8) & 0xff,
-        // source_addr & 0xff,
-        // (dest_addr >> 24) & 0xff,
-        // (dest_addr >> 16) & 0xff,
-        // (dest_addr >> 8) & 0xff,
-        // dest_addr & 0xff,
-        // (_ip_flood >> 24) & 0xff,
-        // (_ip_flood >> 16) & 0xff,
-        // (_ip_flood >> 8) & 0xff,
-        // _ip_flood & 0xff,
-        // (_ip_xdp1 >> 24) & 0xff,
-        // (_ip_xdp1 >> 16) & 0xff,
-        // (_ip_xdp1 >> 8) & 0xff,
-        // _ip_xdp1 & 0xff,
-        // csum
-        // );
-        // // docker0 => 0
-        // // eno1 => 1
-        // // ens3f1 => 2
-        // index 13 // docker0 // bridge not supported
-        // index 2  // eno1    // tg3 driver not supported
-        // index 7  // ens3f1
+        // let if_docker0 = 0
+        // let if_eno1 = 1
+        // let if_ens3f1 = 2
         // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
-        // 20 is veth für iperf3
-        // let ifindex = 28u32; // veth
-        // let ifindex = 42u32;
-        // unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
+        // // index 13 // docker0 // bridge not supported
+        // // index 2  // eno1    // tg3 driver not supported
+        // // index 7  // ens3f1
+        let ifindex = 42u32;
+        unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
         // xdp_action::XDP_TX
-        xdp_action::XDP_PASS
+        // xdp_action::XDP_PASS
     } else {
         xdp_action::XDP_PASS
     };
