@@ -69,13 +69,12 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     match proto {
         IpProto::Udp => {}
         IpProto::Tcp => {}
-        _ => return Ok(xdp_action::XDP_PASS)
+        _ => return Ok(xdp_action::XDP_PASS),
     }
 
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
     // let orig_check = u16::from_be(unsafe { (*ipv4hdr).check });
-    // let new_check = unsafe { checksum(&ctx)? };
     let mut udphdr: Option<*mut UdpHdr> = None;
     let mut tcphdr: Option<*mut TcpHdr> = None;
     let dest_port = match proto {
@@ -92,7 +91,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
 
     // info!(
     //     &ctx,
-    //     "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, checksum: {} (inpkt:{})",
+    //     "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, (inpkt:{})",
     //     (source_addr >> 24) & 0xff,
     //     (source_addr >> 16) & 0xff,
     //     (source_addr >> 8) & 0xff,
@@ -102,7 +101,6 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     //     (dest_addr >> 8) & 0xff,
     //     dest_addr & 0xff,
     //     dest_port.unwrap_or(0),
-    //     new_check,
     //     orig_check
     // );
 
@@ -120,10 +118,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
     let action = match proto {
         IpProto::Udp => {
-            if source_addr == _ip_flood_10
-                && dest_addr == _ip_xdp2_10
-                && dest_port == Some(5202)
-            {
+            if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(5202) {
                 let csum_ip: u16;
                 unsafe {
                     (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
@@ -194,10 +189,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
             }
         }
         IpProto::Tcp => {
-            if source_addr == _ip_flood_10
-                && dest_addr == _ip_xdp2_10
-                && dest_port == Some(5202)
-            {
+            if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(5202) {
                 let csum_ip: u16;
                 unsafe {
                     let tcp_check_orig: u16 = u16::from_be((*tcphdr.unwrap()).check);
