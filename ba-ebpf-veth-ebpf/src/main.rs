@@ -5,7 +5,6 @@ use aya_bpf::{
     bindings::xdp_action,
     helpers::bpf_redirect,
     macros::{map, xdp},
-    maps::HashMap,
     programs::XdpContext,
 };
 use aya_log_ebpf::info;
@@ -17,9 +16,6 @@ use network_types::{
     tcp::TcpHdr,
     udp::UdpHdr,
 };
-
-#[map(name = "IFINDEX")]
-static mut IFINDEX: HashMap<u32, u32> = HashMap::<u32, u32>::with_max_entries(1024, 0);
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
@@ -62,45 +58,60 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
 
 fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
     let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
-    match unsafe { (*ethhdr).ether_type } {
-        EtherType::Ipv4 => {}
-        _ => return Ok(xdp_action::XDP_PASS),
+    if unsafe { (*ethhdr).ether_type } != EtherType::Ipv4 {
+        return Ok(xdp_action::XDP_PASS);
     }
 
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
+    match unsafe { (*ipv4hdr).proto } {
+        IpProto::Udp => {}
+        IpProto::Tcp => {}
+        _ => return Ok(xdp_action::XDP_PASS)
+    }
+
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    let orig_check = u16::from_be(unsafe { (*ipv4hdr).check });
-    let new_check = unsafe { checksum(&ctx)? };
     let proto = unsafe { (*ipv4hdr).proto };
     let mut udphdr: Option<*mut UdpHdr> = None;
     let mut tcphdr: Option<*mut TcpHdr> = None;
     let dest_port = match proto {
         IpProto::Udp => {
             udphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
-            Some(u16::from_be(unsafe { (*udphdr.unwrap()).dest }))
+            u16::from_be(unsafe { (*udphdr.unwrap()).dest })
         }
         IpProto::Tcp => {
             tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
-            Some(u16::from_be(unsafe { (*tcphdr.unwrap()).dest }))
+            u16::from_be(unsafe { (*tcphdr.unwrap()).dest })
         }
-        _ => None,
+        _ => 0,
+        // _ => return Ok(xdp_action::XDP_PASS),
+    };
+    let src_port = match proto {
+        IpProto::Udp => {
+            udphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+            u16::from_be(unsafe { (*udphdr.unwrap()).source })
+        }
+        IpProto::Tcp => {
+            tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+            u16::from_be(unsafe { (*tcphdr.unwrap()).source })
+        }
+        _ => 0,
+        // _ => return Ok(xdp_action::XDP_PASS),
     };
 
     info!(
         &ctx,
-        "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, checksum: {} (inpkt:{})",
+        "_START: from {}.{}.{}.{}:{} to {}.{}.{}.{}:{}",
         (source_addr >> 24) & 0xff,
         (source_addr >> 16) & 0xff,
         (source_addr >> 8) & 0xff,
         source_addr & 0xff,
+        src_port,
         (dest_addr >> 24) & 0xff,
         (dest_addr >> 16) & 0xff,
         (dest_addr >> 8) & 0xff,
         dest_addr & 0xff,
-        dest_port.unwrap_or(0),
-        new_check,
-        orig_check
+        dest_port
     );
 
     // 194.94.217.30 (xdp1)  = 0xc25ed91e = 3260995870  (tcpdump)
@@ -113,90 +124,84 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
     let _ip_xdp2: u32 = 0xc25ed920;
     let _ip_xdp2_10: u32 = 0xa010201;
     let _ip_flood_10: u32 = 0xa010202;
-    let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
+    let _ip_docker = u32::from_be_bytes([172, 17, 0, 2]);
+    let _ip_router = u32::from_be_bytes([172, 17, 0, 1]);
+    let new_dst_addr = _ip_flood_10;
+    let new_src_addr = _ip_xdp2_10;
+    // let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
     // let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
     let action = match proto {
-        IpProto::Udp => {
-            if source_addr == _ip_flood_10
-                && dest_addr == _ip_xdp2_10
-                && dest_port == Some(5202)
-            {
-                let csum_ip: u16;
-                unsafe {
-                    (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
+        // IpProto::Udp => {
+        //     if source_addr == _ip_docker && dest_addr == _ip_flood_10 && src_port == Some(5201) {
+        //         let csum_ip: u16;
+        //         unsafe {
+        //             // (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
 
-                    let udp_check_orig: u16 = u16::from_be((*udphdr.unwrap()).check);
+        //             let udp_check_orig: u16 = u16::from_be((*udphdr.unwrap()).check);
 
-                    // REPLACE DESTINATION IP CHECKSUM PART
-                    // replace first half of address check
-                    let udp_check: u16 = csum_replace(
-                        udp_check_orig,
-                        (dest_addr >> 16) as u16,
-                        (new_dst_addr >> 16) as u16,
-                    );
-                    // replace second half of address
-                    let udp_check: u16 = csum_replace(
-                        udp_check,
-                        (dest_addr & 0xffff) as u16,
-                        (new_dst_addr & 0xffff) as u16,
-                    );
+        //             // // REPLACE DESTINATION IP CHECKSUM PART
+        //             // // replace first half of address check
+        //             // let udp_check: u16 = csum_replace(
+        //             //     udp_check_orig,
+        //             //     (dest_addr >> 16) as u16,
+        //             //     (new_dst_addr >> 16) as u16,
+        //             // );
+        //             // // replace second half of address
+        //             // let udp_check: u16 = csum_replace(
+        //             //     udp_check,
+        //             //     (dest_addr & 0xffff) as u16,
+        //             //     (new_dst_addr & 0xffff) as u16,
+        //             // );
 
-                    // REPLACE DEST_PORT CHECKSUM PART
-                    // replace port in checksum
-                    let udp_check: u16 = csum_replace(udp_check, 5202, 5201);
+        //             // REPLACE DEST_PORT CHECKSUM PART
+        //             // replace port in checksum
+        //             let udp_check: u16 = csum_replace(udp_check_orig, 5201, 5202);
 
-                    (*udphdr.unwrap()).dest = u16::to_be(5201);
+        //             // set source port back to original
+        //             (*udphdr.unwrap()).dest = u16::to_be(5202);
 
-                    // (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
+        //             (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
 
-                    // // REPLACE SOURCE IP CHECKSUM PART
-                    // // replace first half of address check
-                    // let udp_check: u16 = csum_replace(
-                    //     udp_check,
-                    //     (source_addr >> 16) as u16,
-                    //     (new_src_addr >> 16) as u16,
-                    // );
+        //             // REPLACE SOURCE IP CHECKSUM PART
+        //             // replace first half of address check
+        //             let udp_check: u16 = csum_replace(
+        //                 udp_check,
+        //                 (source_addr >> 16) as u16,
+        //                 (new_src_addr >> 16) as u16,
+        //             );
 
-                    // // replace second half of address
-                    // let udp_check: u16 = csum_replace(
-                    //     udp_check,
-                    //     (source_addr & 0xffff) as u16,
-                    //     (new_src_addr & 0xffff) as u16,
-                    // );
+        //             // replace second half of address
+        //             let udp_check: u16 = csum_replace(
+        //                 udp_check,
+        //                 (source_addr & 0xffff) as u16,
+        //                 (new_src_addr & 0xffff) as u16,
+        //             );
 
-                    // write new checksum back into udp header
-                    (*udphdr.unwrap()).check = u16::to_be(udp_check);
-                    csum_ip = checksum(&ctx)?;
-                    (*ipv4hdr).check = u16::to_be(csum_ip);
+        //             // write new checksum back into udp header
+        //             (*udphdr.unwrap()).check = u16::to_be(udp_check);
+        //             csum_ip = checksum(&ctx)?;
+        //             (*ipv4hdr).check = u16::to_be(csum_ip);
 
-                    // container mac 02:42:ac:11:00:02
-                    (*ethhdr).dst_addr[0] = 0x02;
-                    (*ethhdr).dst_addr[1] = 0x42;
-                    (*ethhdr).dst_addr[2] = 0xac;
-                    (*ethhdr).dst_addr[3] = 0x11;
-                    (*ethhdr).dst_addr[4] = 0x00;
-                    (*ethhdr).dst_addr[5] = 0x02;
-                }
-                // let if_docker0 = 0
-                // let if_eno1 = 1
-                // let if_ens3f1 = 2
-                // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
-                // // index 13 // docker0 // bridge not supported
-                // // index 2  // eno1    // tg3 driver not supported
-                // // index 7  // ens3f1
-                let ifindex = 42u32;
-                unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
-                // xdp_action::XDP_TX
-                // xdp_action::XDP_PASS
-            } else {
-                xdp_action::XDP_PASS
-            }
-        }
+        //             // container eth0 mac 02:42:ac:11:00:02
+        //             // xdp2 ens3f1 mac a0:36:9f:f5:99:06
+        //             (*ethhdr).src_addr[0] = 0xa0;
+        //             (*ethhdr).src_addr[1] = 0x36;
+        //             (*ethhdr).src_addr[2] = 0x9f;
+        //             (*ethhdr).src_addr[3] = 0xf5;
+        //             (*ethhdr).src_addr[4] = 0x99;
+        //             (*ethhdr).src_addr[5] = 0x06;
+        //         }
+        //         // let ifidx_ens3f1 = 7
+        //         // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
+        //         // // index 7  // ens3f1
+        //         let ifindex = 7u32;
+        //         unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
+        //     } else {
+        //         xdp_action::XDP_PASS
+        //     }
+        // }
         IpProto::Tcp => {
-            if source_addr == _ip_flood_10
-                && dest_addr == _ip_xdp2_10
-                && dest_port == Some(5202)
-            {
+            if source_addr == _ip_docker && (dest_addr == _ip_flood_10 || dest_addr == _ip_router) && src_port == 5555 {
                 let csum_ip: u16;
                 unsafe {
                     (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
@@ -217,58 +222,60 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
                         (new_dst_addr & 0xffff) as u16,
                     );
 
-                    // REPLACE DEST_PORT CHECKSUM PART
+                    // REPLACE SRC_PORT CHECKSUM PART
                     // replace port in checksum
-                    let tcp_check: u16 = csum_replace(tcp_check, 5202, 5555);
+                    let tcp_check: u16 = csum_replace(tcp_check, 5555, 5202);
 
-                    (*tcphdr.unwrap()).dest = u16::to_be(5555);
+                    (*tcphdr.unwrap()).source = u16::to_be(5202);
 
-                    // (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
+                    (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
 
-                    // // REPLACE SOURCE IP CHECKSUM PART
-                    // // replace first half of address check
-                    // let tcp_check: u16 = csum_replace(
-                    //     tcp_check,
-                    //     (source_addr >> 16) as u16,
-                    //     (new_src_addr >> 16) as u16,
-                    // );
+                    // REPLACE SOURCE IP CHECKSUM PART
+                    // replace first half of address check
+                    let tcp_check: u16 = csum_replace(
+                        tcp_check,
+                        (source_addr >> 16) as u16,
+                        (new_src_addr >> 16) as u16,
+                    );
 
-                    // // replace second half of address
-                    // let tcp_check: u16 = csum_replace(
-                    //     tcp_check,
-                    //     (source_addr & 0xffff) as u16,
-                    //     (new_src_addr & 0xffff) as u16,
-                    // );
+                    // replace second half of address
+                    let tcp_check: u16 = csum_replace(
+                        tcp_check,
+                        (source_addr & 0xffff) as u16,
+                        (new_src_addr & 0xffff) as u16,
+                    );
 
                     // write new checksum back into tcp header
                     (*tcphdr.unwrap()).check = u16::to_be(tcp_check);
                     csum_ip = checksum(&ctx)?;
                     (*ipv4hdr).check = u16::to_be(csum_ip);
 
-                    // container mac 02:42:ac:11:00:02
-                    (*ethhdr).dst_addr[0] = 0x02;
-                    (*ethhdr).dst_addr[1] = 0x42;
-                    (*ethhdr).dst_addr[2] = 0xac;
-                    (*ethhdr).dst_addr[3] = 0x11;
-                    (*ethhdr).dst_addr[4] = 0x00;
-                    (*ethhdr).dst_addr[5] = 0x02;
+                    // container eth0 mac 02:42:ac:11:00:02
+                    // xdp2 ens3f1 mac a0:36:9f:f5:99:06
+                    (*ethhdr).src_addr[0] = 0xa0;
+                    (*ethhdr).src_addr[1] = 0x36;
+                    (*ethhdr).src_addr[2] = 0x9f;
+                    (*ethhdr).src_addr[3] = 0xf5;
+                    (*ethhdr).src_addr[4] = 0x99;
+                    (*ethhdr).src_addr[5] = 0x06;
+
+                    // flood enp2s0f1 a0:36:9f:f5:8a:4a
+                    (*ethhdr).dst_addr[0] = 0xa0;
+                    (*ethhdr).dst_addr[1] = 0x36;
+                    (*ethhdr).dst_addr[2] = 0x9f;
+                    (*ethhdr).dst_addr[3] = 0xf5;
+                    (*ethhdr).dst_addr[4] = 0x8a;
+                    (*ethhdr).dst_addr[5] = 0x4a;
                 }
-                // let if_docker0 = 0
-                // let if_eno1 = 1
-                // let if_ens3f1 = 2
-                // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
-                // // index 13 // docker0 // bridge not supported
-                // // index 2  // eno1    // tg3 driver not supported
+                // let ifidx_ens3f1 = 7
+                // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
                 // // index 7  // ens3f1
-                let ifindex = 42u32;
+                let ifindex = 7u32;
                 unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
-                // xdp_action::XDP_TX
-                // xdp_action::XDP_PASS
             } else {
                 xdp_action::XDP_PASS
             }
         }
-        IpProto::Tcp => {xdp_action::XDP_PASS}
         _ => xdp_action::XDP_PASS,
     };
 
@@ -285,14 +292,27 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
         }
         _ => None,
     };
+    let src_port = match proto {
+        IpProto::Udp => {
+            udphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+            u16::from_be(unsafe { (*udphdr.unwrap()).source })
+        }
+        IpProto::Tcp => {
+            tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+            u16::from_be(unsafe { (*tcphdr.unwrap()).source })
+        }
+        _ => 0,
+        // _ => return Ok(xdp_action::XDP_PASS),
+    };
 
     info!(
         &ctx,
-        "_END: from {}.{}.{}.{} to {}.{}.{}.{}:{}, action: {}",
+        "_END: from {}.{}.{}.{}:{} to {}.{}.{}.{}:{}, action: {}",
         (source_addr >> 24) & 0xff,
         (source_addr >> 16) & 0xff,
         (source_addr >> 8) & 0xff,
         source_addr & 0xff,
+        src_port,
         (dest_addr >> 24) & 0xff,
         (dest_addr >> 16) & 0xff,
         (dest_addr >> 8) & 0xff,
@@ -323,17 +343,6 @@ unsafe fn checksum(ctx: &XdpContext) -> Result<u16, ()> {
 
     let orig_check = check;
 
-    // 16bit | version, ihl, dscp_ecn |
-    // 16bit | tot_len |
-    // 16bit | id |
-    // 16bit | flags, frag_off |
-    // 16bit | ttl, protocol |
-    // 16bit | checksum |
-    // 16bit | src_addr/2 |
-    // 16bit | src_addr/2 |
-    // 16bit | dst_addr/2 |
-    // 16bit | dst_addr/2 |
-
     info!(ctx, "  checksum: packet data: v:{}, ihl:{}, dscp_ecn:{}, tot_len:{}, id:{}, flags:{}, frag_off:{}, ttl:{}, proto:{}, check:{}, src:{}, dst:{}",
           version, ihl, dcp_ecn, tot_len, id, flags, frag_off, ttl, proto, check, src_addr, dst_addr);
 
@@ -348,32 +357,6 @@ unsafe fn checksum(ctx: &XdpContext) -> Result<u16, ()> {
     let word7: u16 = src_addr as u16;
     let word8: u16 = (dst_addr >> 16) as u16;
     let word9: u16 = dst_addr as u16;
-    //     info!(
-    //         ctx,
-    //         " checksum: WORDS in calc
-    // word0: {} version+ihl+dscp/tos
-    // word1: {} total length
-    // word2: {} id
-    // word3: {} flags+frag_off
-    // word4: {} ttl({})+proto({})
-    // word5: {} checksum
-    // word6: {} src_addr/1
-    // word7: {} src_addr/2
-    // word8: {} dst_addr/1
-    // word9: {} dst_addr/2",
-    //         word0,
-    //         word1,
-    //         word2,
-    //         word3,
-    //         word4,
-    //         ttl,
-    //         proto,
-    //         word5,
-    //         word6,
-    //         word7,
-    //         word8,
-    //         word9
-    //     );
 
     let mut sum: u32 = word0 as u32
         + word1 as u32
@@ -397,33 +380,6 @@ unsafe fn checksum(ctx: &XdpContext) -> Result<u16, ()> {
     Ok(res)
 }
 
-// unsafe fn udp_checksum(ctx: &XdpContext) -> Result<u16, ()> {
-//     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
-//     let proto: u16 = u16::from_be((*ipv4hdr).proto as u16);
-//     let src_addr: u32 = u32::from_be((*ipv4hdr).src_addr);
-//     let dst_addr: u32 = u32::from_be((*ipv4hdr).dst_addr);
-
-//     let udphdr: *const UdpHdr = ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-//     let udp_len = u16::from_be(unsafe { (*udphdr).len });
-//     let dst_port = u16::from_be(unsafe { (*udphdr).dest });
-//     let src_port = u16::from_be(unsafe { (*udphdr).source });
-
-//     let data: *const u16 = ptr_at(ctx, EthHdr::LEN + Ipv4Hdr::LEN + UdpHdr::LEN)?;
-
-//     let word0: u16 = (src_addr >> 16) as u16;
-//     let word1: u16 = src_addr as u16;
-//     let word2: u16 = (dst_addr >> 16) as u16;
-//     let word3: u16 = dst_addr as u16;
-//     let word4: u16 = proto;
-//     let word5: u16 = udp_len;
-//     let word6: u16 = src_port;
-//     let word7: u16 = dst_port;
-//     let word8: u16 = udp_len;
-//     let word9: u16 = 0; // checksum
-//     let word10: u16 = data; // AAAAHHHH
-//     (*bpf_l4_csum_replace)(struct __sk_buff *skb, __u32 offset, __u64 from, __u64 to, __u64 flags)
-// }
-
 fn csum16_add(csum: u16, addend: u16) -> u16 {
     let res: u16 = csum;
     let res = res.wrapping_add(addend);
@@ -433,24 +389,11 @@ fn csum16_add(csum: u16, addend: u16) -> u16 {
         res
     }
 }
-// from xdp-tutorial advanced03-AF_XDP/af_xdp_user.c
-// static inline __sum16 csum16_add(__sum16 csum, __be16 addend) {
-//     uint16_t res = (uint16_t)csum;
-
-//     res += (__u16)addend;
-//     return (__sum16)(res + (res < (__u16)addend));
-// }
 
 fn csum16_sub(csum: u16, addend: u16) -> u16 {
     csum16_add(csum, !addend)
 }
-// static inline __sum16 csum16_sub(__sum16 csum, __be16 addend) {
-//     return csum16_add(csum, ~addend);
-// }
 
 fn csum_replace(check: u16, old: u16, new: u16) -> u16 {
     !csum16_add(csum16_sub(!check, old), new)
 }
-// static inline void csum_replace2(__sum16 *sum, __be16 old, __be16 new) {
-//     *sum = ~csum16_add(csum16_sub(~(*sum), old), new);
-// }

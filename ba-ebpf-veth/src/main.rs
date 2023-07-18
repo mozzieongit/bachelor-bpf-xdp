@@ -45,19 +45,6 @@ async fn main() -> Result<(), anyhow::Error> {
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-    let mut ifindex: HashMap<_, u32, u32> =
-        HashMap::try_from(bpf.map_mut("IFINDEX").unwrap())?;
-
-    let pairs = vec![
-        (0,16), // docker0
-        (1,2), // eno1
-        (2,7) // ens3f1
-    ];
-
-    for pair in pairs.iter() {
-        ifindex.insert(pair.0, pair.1, 0)?;
-    }
-
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
     info!("Exiting...");
