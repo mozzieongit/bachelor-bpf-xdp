@@ -18,9 +18,6 @@ use network_types::{
     udp::UdpHdr,
 };
 
-#[map(name = "IFINDEX")]
-static mut IFINDEX: HashMap<u32, u32> = HashMap::<u32, u32>::with_max_entries(1024, 0);
-
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::hint::unreachable_unchecked() }
@@ -47,18 +44,18 @@ fn ptr_at_mut<T>(ctx: &XdpContext, offset: usize) -> Result<*mut T, ()> {
     Ok((start + offset) as *mut T)
 }
 
-#[inline(always)]
-fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
-    let start = ctx.data();
-    let end = ctx.data_end();
-    let len = mem::size_of::<T>();
+// #[inline(always)]
+// fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
+//     let start = ctx.data();
+//     let end = ctx.data_end();
+//     let len = mem::size_of::<T>();
 
-    if start + offset + len > end {
-        return Err(());
-    }
+//     if start + offset + len > end {
+//         return Err(());
+//     }
 
-    Ok((start + offset) as *const T)
-}
+//     Ok((start + offset) as *const T)
+// }
 
 fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
@@ -68,11 +65,17 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     }
 
     let ipv4hdr: *mut Ipv4Hdr = ptr_at_mut(&ctx, EthHdr::LEN)?;
+    let proto = unsafe { (*ipv4hdr).proto };
+    match proto {
+        IpProto::Udp => {}
+        IpProto::Tcp => {}
+        _ => return Ok(xdp_action::XDP_PASS)
+    }
+
     let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
     let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    let orig_check = u16::from_be(unsafe { (*ipv4hdr).check });
-    let new_check = unsafe { checksum(&ctx)? };
-    let proto = unsafe { (*ipv4hdr).proto };
+    // let orig_check = u16::from_be(unsafe { (*ipv4hdr).check });
+    // let new_check = unsafe { checksum(&ctx)? };
     let mut udphdr: Option<*mut UdpHdr> = None;
     let mut tcphdr: Option<*mut TcpHdr> = None;
     let dest_port = match proto {
@@ -87,21 +90,21 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
         _ => None,
     };
 
-    info!(
-        &ctx,
-        "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, checksum: {} (inpkt:{})",
-        (source_addr >> 24) & 0xff,
-        (source_addr >> 16) & 0xff,
-        (source_addr >> 8) & 0xff,
-        source_addr & 0xff,
-        (dest_addr >> 24) & 0xff,
-        (dest_addr >> 16) & 0xff,
-        (dest_addr >> 8) & 0xff,
-        dest_addr & 0xff,
-        dest_port.unwrap_or(0),
-        new_check,
-        orig_check
-    );
+    // info!(
+    //     &ctx,
+    //     "_START: from {}.{}.{}.{} to {}.{}.{}.{}:{}, checksum: {} (inpkt:{})",
+    //     (source_addr >> 24) & 0xff,
+    //     (source_addr >> 16) & 0xff,
+    //     (source_addr >> 8) & 0xff,
+    //     source_addr & 0xff,
+    //     (dest_addr >> 24) & 0xff,
+    //     (dest_addr >> 16) & 0xff,
+    //     (dest_addr >> 8) & 0xff,
+    //     dest_addr & 0xff,
+    //     dest_port.unwrap_or(0),
+    //     new_check,
+    //     orig_check
+    // );
 
     // 194.94.217.30 (xdp1)  = 0xc25ed91e = 3260995870  (tcpdump)
     // 194.94.217.31 (flood) = 0xc25ed91f = 3260995871
@@ -177,10 +180,8 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ethhdr).dst_addr[4] = 0x00;
                     (*ethhdr).dst_addr[5] = 0x02;
                 }
-                // let if_docker0 = 0
-                // let if_eno1 = 1
-                // let if_ens3f1 = 2
-                // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
+                // let if_ens3f1 = 7
+                // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
                 // // index 13 // docker0 // bridge not supported
                 // // index 2  // eno1    // tg3 driver not supported
                 // // index 7  // ens3f1
@@ -261,17 +262,13 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ethhdr).src_addr[4] = 0x6c;
                     (*ethhdr).src_addr[5] = 0xb8;
                 }
-                // let if_docker0 = 0
-                // let if_eno1 = 1
-                // let if_ens3f1 = 2
-                // let ifindex = *(unsafe { IFINDEX.get(&1).unwrap_or(&0) });
+                // let if_ens3f1 = 7
+                // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
                 // // index 13 // docker0 // bridge not supported
                 // // index 2  // eno1    // tg3 driver not supported
                 // // index 7  // ens3f1
                 let ifindex = 46u32;
                 unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
-                // xdp_action::XDP_TX
-                // xdp_action::XDP_PASS
             } else {
                 xdp_action::XDP_PASS
             }
@@ -279,34 +276,34 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
         _ => xdp_action::XDP_PASS,
     };
 
-    let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
-    let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
-    let dest_port = match proto {
-        IpProto::Udp => {
-            udphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
-            Some(u16::from_be(unsafe { (*udphdr.unwrap()).dest }))
-        }
-        IpProto::Tcp => {
-            tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
-            Some(u16::from_be(unsafe { (*tcphdr.unwrap()).dest }))
-        }
-        _ => None,
-    };
+    // let source_addr = u32::from_be(unsafe { (*ipv4hdr).src_addr });
+    // let dest_addr = u32::from_be(unsafe { (*ipv4hdr).dst_addr });
+    // let dest_port = match proto {
+    //     IpProto::Udp => {
+    //         udphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+    //         Some(u16::from_be(unsafe { (*udphdr.unwrap()).dest }))
+    //     }
+    //     IpProto::Tcp => {
+    //         tcphdr = Some(ptr_at_mut(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?);
+    //         Some(u16::from_be(unsafe { (*tcphdr.unwrap()).dest }))
+    //     }
+    //     _ => None,
+    // };
 
-    info!(
-        &ctx,
-        "_END: from {}.{}.{}.{} to {}.{}.{}.{}:{}, action: {}",
-        (source_addr >> 24) & 0xff,
-        (source_addr >> 16) & 0xff,
-        (source_addr >> 8) & 0xff,
-        source_addr & 0xff,
-        (dest_addr >> 24) & 0xff,
-        (dest_addr >> 16) & 0xff,
-        (dest_addr >> 8) & 0xff,
-        dest_addr & 0xff,
-        dest_port.unwrap_or(0),
-        action
-    );
+    // info!(
+    //     &ctx,
+    //     "_END: from {}.{}.{}.{} to {}.{}.{}.{}:{}, action: {}",
+    //     (source_addr >> 24) & 0xff,
+    //     (source_addr >> 16) & 0xff,
+    //     (source_addr >> 8) & 0xff,
+    //     source_addr & 0xff,
+    //     (dest_addr >> 24) & 0xff,
+    //     (dest_addr >> 16) & 0xff,
+    //     (dest_addr >> 8) & 0xff,
+    //     dest_addr & 0xff,
+    //     dest_port.unwrap_or(0),
+    //     action
+    // );
 
     Ok(action)
 }
