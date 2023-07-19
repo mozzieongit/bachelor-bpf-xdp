@@ -116,21 +116,22 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let _ip_flood_10: u32 = 0xa010202;
     let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
     let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
+    let veth_ifindex = 48u32;
     let action = match proto {
         IpProto::Udp => {
             if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(5202) {
                 unsafe {
-                    let udp_check: u16 = u16::from_be((*udphdr.unwrap()).check);
-                    let ip4_check: u16 = ip4_check_orig;
+                    let mut udp_check: u16 = u16::from_be((*udphdr.unwrap()).check);
+                    let mut ip4_check: u16 = ip4_check_orig;
 
                     // replace destination ip
                     (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
-                    let ip4_check = csum_replace_u32(ip4_check, dest_addr, new_dst_addr);
-                    let udp_check = csum_replace_u32(udp_check, dest_addr, new_dst_addr);
+                    ip4_check = csum_replace_u32(ip4_check, dest_addr, new_dst_addr);
+                    udp_check = csum_replace_u32(udp_check, dest_addr, new_dst_addr);
 
                     // replace dest_port
                     (*udphdr.unwrap()).dest = u16::to_be(5201);
-                    let udp_check: u16 = csum_replace(udp_check, 5202, 5201);
+                    udp_check = csum_replace(udp_check, 5202, 5201);
 
                     // (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
                     // let ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
@@ -145,8 +146,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                 }
                 // let if_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
-                let ifindex = 46u32;
-                unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
+                unsafe { bpf_redirect(veth_ifindex, 0).try_into().unwrap() }
             } else {
                 xdp_action::XDP_PASS
             }
@@ -183,8 +183,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                 }
                 // let if_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
-                let ifindex = 46u32;
-                unsafe { bpf_redirect(ifindex, 0).try_into().unwrap() }
+                unsafe { bpf_redirect(veth_ifindex, 0).try_into().unwrap() }
             } else {
                 xdp_action::XDP_PASS
             }
