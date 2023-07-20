@@ -18,6 +18,9 @@ use network_types::{
     udp::UdpHdr,
 };
 
+#[map(name = "IFINDEX")]
+static mut IFINDEX: HashMap<u32, u32> = HashMap::<u32, u32>::with_max_entries(8, 0);
+
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::hint::unreachable_unchecked() }
@@ -100,7 +103,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     //     (dest_addr >> 8) & 0xff,
     //     dest_addr & 0xff,
     //     dest_port.unwrap_or(0),
-    //     orig_check
+    //     ip4_check_orig
     // );
 
     // 194.94.217.30 (xdp1)  = 0xc25ed91e = 3260995870  (tcpdump)
@@ -115,7 +118,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let _ip_flood_10: u32 = 0xa010202;
     let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
     let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
-    let veth_ifindex = 48u32;
+    let veth_ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
     let new_dst_port = 3333u16;
     let xdp_dst_port = 5202u16;
     let action = match proto {
@@ -134,9 +137,9 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*udphdr.unwrap()).dest = u16::to_be(new_dst_port);
                     udp_check = csum_replace(udp_check, xdp_dst_port, new_dst_port);
 
-                    // (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
-                    // let ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
-                    // let udp_check = csum_replace_u32(udp_check, source_addr, new_src_addr);
+                    (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
+                    let ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
+                    let udp_check = csum_replace_u32(udp_check, source_addr, new_src_addr);
 
                     // write new checksum back into headers
                     (*udphdr.unwrap()).check = u16::to_be(udp_check);
@@ -144,6 +147,8 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
 
                     // container mac 02:42:ac:11:00:02
                     set_mac(&mut (*ethhdr).dst_addr, [0x02, 0x42, 0xac, 0x11, 0x00, 0x02]);
+                    // xdp2-docker-router docker0 mac 02:42:c4:64:6c:b8
+                    set_mac(&mut (*ethhdr).src_addr, [0x02, 0x42, 0xc4, 0x64, 0x6c, 0xb8]);
                 }
                 // let if_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });

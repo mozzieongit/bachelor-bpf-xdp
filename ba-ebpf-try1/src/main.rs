@@ -4,18 +4,18 @@ use aya::{
     maps::HashMap,
     programs::{Xdp, XdpFlags},
     Bpf,
-    util,
 };
 use aya_log::BpfLogger;
 use clap::Parser;
 use log::{info, warn};
-use std::net::Ipv4Addr;
 use tokio::signal;
 
 #[derive(Debug, Parser)]
 struct Opt {
     #[clap(short, long, default_value = "eth0")]
     iface: String,
+    #[clap(short, long)]
+    out_iface_index: u32,
 }
 
 #[tokio::main]
@@ -44,6 +44,11 @@ async fn main() -> Result<(), anyhow::Error> {
     program.load()?;
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+
+    let mut ifindex: HashMap<_, u32, u32> =
+        HashMap::try_from(bpf.map_mut("IFINDEX").unwrap())?;
+
+    ifindex.insert(0, opt.out_iface_index, 0)?;
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
