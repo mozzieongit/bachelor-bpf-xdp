@@ -121,7 +121,7 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
     let xdp_src_port = 5202u16;
     let action = match proto {
         IpProto::Udp => {
-            if source_addr == _ip_docker && dest_addr == _ip_flood_10 && src_port == Some(docker_src_port) {
+            if source_addr == _ip_docker && dest_addr == _ip_router && src_port == Some(docker_src_port) {
                 unsafe {
                     let mut udp_check: u16 = u16::from_be((*udphdr.unwrap()).check);
                     let mut ip4_check: u16 = ip4_check_orig;
@@ -132,7 +132,7 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
                     udp_check = csum_replace_u32(udp_check, dest_addr, new_dst_addr);
 
                     // replace dest_port
-                    (*udphdr.unwrap()).dest = u16::to_be(xdp_src_port);
+                    (*udphdr.unwrap()).source = u16::to_be(xdp_src_port);
                     udp_check = csum_replace(udp_check, docker_src_port, xdp_src_port);
 
                     // replace source ip
@@ -146,7 +146,9 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
 
                     // container eth0 mac 02:42:ac:11:00:02
                     // xdp2 ens3f1 mac a0:36:9f:f5:99:06
+                    // flood enp2s0f1 mac a0:36:9f:f5:8a:4a
                     set_mac(&mut (*ethhdr).src_addr, [0xa0, 0x36, 0x9f, 0xf5, 0x99, 0x06]);
+                    set_mac(&mut (*ethhdr).dst_addr, [0xa0, 0x36, 0x9f, 0xf5, 0x8a, 0x4a]);
                 }
                 // let ifidx_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
@@ -157,7 +159,7 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
             }
         }
         IpProto::Tcp => {
-            if source_addr == _ip_docker && dest_addr == _ip_router && src_port == Some(5555) {
+            if source_addr == _ip_docker && dest_addr == _ip_router && src_port == Some(docker_src_port) {
                 unsafe {
                     let mut tcp_check: u16 = u16::from_be((*tcphdr.unwrap()).check);
                     let mut ip4_check: u16 = ip4_check_orig;
@@ -168,7 +170,7 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
 
                     // replace src_port
                     (*tcphdr.unwrap()).source = u16::to_be(xdp_src_port);
-                    tcp_check = csum_replace(tcp_check, 5555, xdp_src_port);
+                    tcp_check = csum_replace(tcp_check, docker_src_port, xdp_src_port);
 
                     (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
                     ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
