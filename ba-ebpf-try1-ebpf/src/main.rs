@@ -119,8 +119,7 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let new_dst_addr = u32::from_be_bytes([172, 17, 0, 2]);
     let new_src_addr = u32::from_be_bytes([172, 17, 0, 1]);
     let veth_ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
-    let new_dst_port = 3333u16;
-    let xdp_dst_port = 5202u16;
+    let xdp_dst_port = 4444u16;
     let action = match proto {
         IpProto::Udp => {
             if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(xdp_dst_port) {
@@ -132,10 +131,6 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
                     ip4_check = csum_replace_u32(ip4_check, dest_addr, new_dst_addr);
                     udp_check = csum_replace_u32(udp_check, dest_addr, new_dst_addr);
-
-                    // replace dest_port
-                    (*udphdr.unwrap()).dest = u16::to_be(new_dst_port);
-                    udp_check = csum_replace(udp_check, xdp_dst_port, new_dst_port);
 
                     (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
                     let ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
@@ -167,10 +162,6 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ipv4hdr).dst_addr = u32::to_be(new_dst_addr);
                     ip4_check = csum_replace_u32(ip4_check, dest_addr, new_dst_addr);
                     tcp_check = csum_replace_u32(tcp_check, dest_addr, new_dst_addr);
-
-                    // replace dest_port
-                    (*tcphdr.unwrap()).dest = u16::to_be(new_dst_port);
-                    tcp_check = csum_replace(tcp_check, xdp_dst_port, new_dst_port);
 
                     (*ipv4hdr).src_addr = u32::to_be(new_src_addr);
                     ip4_check = csum_replace_u32(ip4_check, source_addr, new_src_addr);
