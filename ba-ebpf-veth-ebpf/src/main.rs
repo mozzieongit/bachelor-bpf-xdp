@@ -233,6 +233,43 @@ fn try_ba_ebpf_veth(ctx: XdpContext) -> Result<u32, ()> {
     Ok(action)
 }
 
+fn csum_replace_u32(mut check: u16, old: u32, new: u32) -> u16 {
+    check = csum_replace(check, (old >> 16) as u16, (new >> 16) as u16);
+    check = csum_replace(check, (old & 0xffff) as u16, (new & 0xffff) as u16);
+    check
+}
+
+fn set_mac(hdr_part: &mut [u8; 6], new_mac: [u8; 6]) {
+    hdr_part[0] = new_mac[0];
+    hdr_part[1] = new_mac[1];
+    hdr_part[2] = new_mac[2];
+    hdr_part[3] = new_mac[3];
+    hdr_part[4] = new_mac[4];
+    hdr_part[5] = new_mac[5];
+}
+
+/*******************************************************************************
+* Title: XDP Tutorial
+* Author: Eelco Chaudron
+* Date: 2019-08-16
+* Availability: https://github.com/xdp-project/xdp-tutorial
+* **************************************************************************/
+// from xdp-tutorial:advanced03-AF_XDP/af_xdp_user.c
+// static inline __sum16 csum16_add(__sum16 csum, __be16 addend) {
+//     uint16_t res = (uint16_t)csum;
+
+//     res += (__u16)addend;
+//     return (__sum16)(res + (res < (__u16)addend));
+// }
+// static inline __sum16 csum16_sub(__sum16 csum, __be16 addend) {
+//     return csum16_add(csum, ~addend);
+// }
+// static inline void csum_replace2(__sum16 *sum, __be16 old, __be16 new) {
+//     *sum = ~csum16_add(csum16_sub(~(*sum), old), new);
+// }
+// The algorithm can also be found in RFC 1624.
+// The Code was modified to fit into rust syntax.
+
 fn csum16_add(csum: u16, addend: u16) -> u16 {
     let res: u16 = csum;
     let res = res.wrapping_add(addend);
@@ -249,19 +286,4 @@ fn csum16_sub(csum: u16, addend: u16) -> u16 {
 
 fn csum_replace(check: u16, old: u16, new: u16) -> u16 {
     !csum16_add(csum16_sub(!check, old), new)
-}
-
-fn csum_replace_u32(mut check: u16, old: u32, new: u32) -> u16 {
-    check = csum_replace(check, (old >> 16) as u16, (new >> 16) as u16);
-    check = csum_replace(check, (old & 0xffff) as u16, (new & 0xffff) as u16);
-    check
-}
-
-fn set_mac(hdr_part: &mut [u8; 6], new_mac: [u8; 6]) {
-    hdr_part[0] = new_mac[0];
-    hdr_part[1] = new_mac[1];
-    hdr_part[2] = new_mac[2];
-    hdr_part[3] = new_mac[3];
-    hdr_part[4] = new_mac[4];
-    hdr_part[5] = new_mac[5];
 }
