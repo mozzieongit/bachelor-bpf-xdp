@@ -122,7 +122,10 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
     let xdp_dst_port = 4444u16;
     let action = match proto {
         IpProto::Udp => {
-            if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(xdp_dst_port) {
+            if source_addr == _ip_flood_10
+                && dest_addr == _ip_xdp2_10
+                && dest_port == Some(xdp_dst_port)
+            {
                 unsafe {
                     let mut udp_check: u16 = u16::from_be((*udphdr.unwrap()).check);
                     let mut ip4_check: u16 = ip4_check_orig;
@@ -141,9 +144,15 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ipv4hdr).check = u16::to_be(ip4_check);
 
                     // container mac 02:42:ac:11:00:02
-                    set_mac(&mut (*ethhdr).dst_addr, [0x02, 0x42, 0xac, 0x11, 0x00, 0x02]);
+                    set_mac(
+                        &mut (*ethhdr).dst_addr,
+                        [0x02, 0x42, 0xac, 0x11, 0x00, 0x02],
+                    );
                     // xdp2-docker-router docker0 mac 02:42:c4:64:6c:b8
-                    set_mac(&mut (*ethhdr).src_addr, [0x02, 0x42, 0xc4, 0x64, 0x6c, 0xb8]);
+                    set_mac(
+                        &mut (*ethhdr).src_addr,
+                        [0x02, 0x42, 0xc4, 0x64, 0x6c, 0xb8],
+                    );
                 }
                 // let if_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
@@ -153,7 +162,10 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
             }
         }
         IpProto::Tcp => {
-            if source_addr == _ip_flood_10 && dest_addr == _ip_xdp2_10 && dest_port == Some(xdp_dst_port) {
+            if source_addr == _ip_flood_10
+                && dest_addr == _ip_xdp2_10
+                && dest_port == Some(xdp_dst_port)
+            {
                 unsafe {
                     let mut tcp_check: u16 = u16::from_be((*tcphdr.unwrap()).check);
                     let mut ip4_check: u16 = ip4_check_orig;
@@ -173,10 +185,16 @@ fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
                     (*ipv4hdr).check = u16::to_be(ip4_check);
 
                     // container mac 02:42:ac:11:00:02
-                    set_mac(&mut (*ethhdr).dst_addr, [0x02, 0x42, 0xac, 0x11, 0x00, 0x02]);
+                    set_mac(
+                        &mut (*ethhdr).dst_addr,
+                        [0x02, 0x42, 0xac, 0x11, 0x00, 0x02],
+                    );
 
                     // xdp2-docker-router docker0 mac 02:42:c4:64:6c:b8
-                    set_mac(&mut (*ethhdr).src_addr, [0x02, 0x42, 0xc4, 0x64, 0x6c, 0xb8]);
+                    set_mac(
+                        &mut (*ethhdr).src_addr,
+                        [0x02, 0x42, 0xc4, 0x64, 0x6c, 0xb8],
+                    );
                 }
                 // let if_ens3f1 = 7
                 // let ifindex = *(unsafe { IFINDEX.get(&0).unwrap_or(&0) });
