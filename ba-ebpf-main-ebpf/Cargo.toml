@@ -1,17 +1,17 @@
 [package]
-name = "ba-ebpf-try1-ebpf"
+name = "ba-ebpf-main-ebpf"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 aya-bpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
 aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
-ba-ebpf-try1-common = { path = "../ba-ebpf-try1-common" }
+ba-ebpf-main-common = { path = "../ba-ebpf-main-common" }
 network-types = "0.0.4"
 memoffset = "0.9"
 
 [[bin]]
-name = "ba-ebpf-try1"
+name = "ba-ebpf-main"
 path = "src/main.rs"
 
 [profile.dev]

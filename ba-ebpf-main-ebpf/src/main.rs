@@ -26,9 +26,9 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::hint::unreachable_unchecked() }
 }
 
-#[xdp(name = "ba_ebpf_try1")]
-pub fn ba_ebpf_try1(ctx: XdpContext) -> u32 {
-    match try_ba_ebpf_try1(ctx) {
+#[xdp(name = "ba_ebpf_main")]
+pub fn ba_ebpf_main(ctx: XdpContext) -> u32 {
+    match try_ba_ebpf_main(ctx) {
         Ok(ret) => ret,
         Err(_) => xdp_action::XDP_ABORTED,
     }
@@ -60,7 +60,7 @@ fn ptr_at_mut<T>(ctx: &XdpContext, offset: usize) -> Result<*mut T, ()> {
 //     Ok((start + offset) as *const T)
 // }
 
-fn try_ba_ebpf_try1(ctx: XdpContext) -> Result<u32, ()> {
+fn try_ba_ebpf_main(ctx: XdpContext) -> Result<u32, ()> {
     let ethhdr: *mut EthHdr = ptr_at_mut(&ctx, 0)?;
     if unsafe { (*ethhdr).ether_type } != EtherType::Ipv4 {
         return Ok(xdp_action::XDP_PASS);
